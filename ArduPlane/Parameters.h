@@ -371,6 +371,9 @@ public:
         k_param_mode_autoland,
         k_param__gcs,
 
+        // high index chosen to stay clear of upstream additions
+        k_param_runway_takeoff = 300,
+
     };
 
     AP_Int16 format_version;
