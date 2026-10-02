@@ -422,13 +422,24 @@ bool RunwayTakeoff::abort_enabled() const
     return abort_xtrk > 0 || abort_hdg > 0;
 }
 
+/*
+  true if an ICE start/stop RC switch is configured and is (or may be)
+  asking for the engine to run. With no switch configured (engine
+  started and stopped by MAVLink commands) this is always false, so the
+  abort clears on disarm.
+ */
 bool RunwayTakeoff::engine_switch_in_run() const
 {
 #if AP_ICENGINE_ENABLED
-    // use the engine controller's own view of the start switch, which
-    // is what it will act on once the emergency stop is released. This
-    // is retained through an RC failsafe, unlike the live RC input.
-    return plane.g2.ice_control.get_start_switch_pos() == RC_Channel::AuxSwitchPos::HIGH;
+    RC_Channel *c = rc().find_channel_for_option(RC_Channel::AUX_FUNC::ICE_START_STOP);
+    if (c == nullptr) {
+        return false;
+    }
+    if (!rc().has_valid_input()) {
+        // can't see the switch: stay latched
+        return true;
+    }
+    return c->get_aux_switch_pos() == RC_Channel::AuxSwitchPos::HIGH;
 #else
     return false;
 #endif

@@ -21,6 +21,10 @@ TKOFF_THR_DELAY 0
 TKOFF_GND_PITCH 0
 LEVEL_ROLL_LIMIT 5
 
+# engine started/stopped by MAVLink DO_ENGINE_CONTROL only (no RC switch),
+# overriding RC11_OPTION 179 from plane-ice.parm
+RC11_OPTION 0
+
 # brakes on SERVO9 as RC9 passthrough (the sim has no brakes; watch the PWM)
 SERVO9_FUNCTION 59
 
