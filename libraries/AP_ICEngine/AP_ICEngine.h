@@ -57,6 +57,10 @@ public:
     // get current engine control state
     ICE_State get_state(void) const { return !enable?ICE_DISABLED:state; }
 
+    // last position of the ICE_START_STOP aux switch as seen by the
+    // engine controller (retained through RC loss)
+    RC_Channel::AuxSwitchPos get_start_switch_pos(void) const { return aux_pos; }
+
     // handle DO_ENGINE_CONTROL messages via MAVLink or mission
     bool engine_control(float start_control, float cold_start, float height_delay, uint32_t flags);
 

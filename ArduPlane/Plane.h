@@ -128,6 +128,7 @@
 #endif  // AP_ADSB_AVOIDANCE_ENABLED
 #include "AP_Arming_Plane.h"
 #include "pullup.h"
+#include "runway_takeoff.h"
 #include "systemid.h"
 
 /*
@@ -187,6 +188,9 @@ public:
 #endif
 #if AP_PLANE_GLIDER_PULLUP_ENABLED
     friend class GliderPullup;
+#endif
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    friend class RunwayTakeoff;
 #endif
 #if AP_PLANE_SYSTEMID_ENABLED
     friend class AP_SystemID;
@@ -313,6 +317,10 @@ private:
     ModeCruise mode_cruise;
     ModeAutoTune mode_autotune;
     ModeAuto mode_auto;
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    // runway centreline tracking and abort for AUTO takeoff
+    RunwayTakeoff runway_takeoff;
+#endif
     ModeRTL mode_rtl;
     ModeLoiter mode_loiter;
 #if HAL_ADSB_ENABLED

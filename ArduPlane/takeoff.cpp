@@ -61,6 +61,15 @@ bool Plane::auto_takeoff_check(void)
         return false;
     }
 
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    // runway alignment / configuration checks, and abort latch
+    if (!runway_takeoff.launch_allowed(control_mode == &mode_auto)) {
+        takeoff_state.launchTimerStarted = false;
+        takeoff_state.last_tkoff_arm_time = 0;
+        return false;
+    }
+#endif
+
     bool do_takeoff_attitude_check = !(flight_option_enabled(FlightOptions::DISABLE_TOFF_ATTITUDE_CHK));
 #if HAL_QUADPLANE_ENABLED
     // disable attitude check on tailsitters
@@ -131,6 +140,9 @@ bool Plane::auto_takeoff_check(void)
         takeoff_state.level_off_start_time_ms = 0;
         takeoff_state.throttle_max_timer_ms = now;
         steer_state.locked_course_err = 0; // use current heading without any error offset
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+        runway_takeoff.launch_started();
+#endif
         return true;
     }
 

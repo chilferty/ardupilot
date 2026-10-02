@@ -384,6 +384,10 @@ Location Plane::calc_best_rally_or_home_location(const Location &_current_loc, f
  */
 void Plane::do_takeoff(const AP_Mission::Mission_Command& cmd)
 {
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    // the TAKEOFF lat/lon (otherwise unused by Plane) defines the runway
+    runway_takeoff.init(cmd.content.location);
+#endif
     prev_WP_loc = current_loc;
     set_next_WP(cmd.content.location);
     // pitch in deg, airspeed  m/s, throttle %, track WP 1 or 0
@@ -588,7 +592,11 @@ bool Plane::verify_takeoff()
         // compass errors for auto takeoff
         if (gps.status() >= AP_GPS_FixType::FIX_3D && 
             gps.ground_speed() > GPS_GND_CRS_MIN_SPD &&
-            hal.util->safety_switch_state() != AP_HAL::Util::SAFETY_DISARMED) {
+            hal.util->safety_switch_state() != AP_HAL::Util::SAFETY_DISARMED
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+            && !runway_takeoff.active()
+#endif
+            ) {
             float takeoff_course = wrap_PI(radians(gps.ground_course())) - steer_state.locked_course_err;
             takeoff_course = wrap_PI(takeoff_course);
             steer_state.hold_course_cd = wrap_360_cd(degrees(takeoff_course)*100);
@@ -599,12 +607,33 @@ bool Plane::verify_takeoff()
         }
     }
 
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    if (runway_takeoff.active() && trust_ahrs_yaw && steer_state.hold_course_cd == -1 &&
+        gps.status() >= AP_GPS_FixType::FIX_3D &&
+        gps.ground_speed() > GPS_GND_CRS_MIN_SPD &&
+        hal.util->safety_switch_state() != AP_HAL::Util::SAFETY_DISARMED) {
+        // same trigger as the stock course lock, but the course is the
+        // runway heading. hold_course_cd != -1 selects course steering
+        // (calc_nav_yaw_course) which uses the L1 bearing error below
+        steer_state.hold_course_cd = runway_takeoff.runway_heading_cd();
+    }
+
+    if (steer_state.hold_course_cd != -1 && runway_takeoff.active()) {
+        // track the runway centreline rather than hold a heading
+        runway_takeoff.update_l1();
+    } else
+#endif
     if (steer_state.hold_course_cd != -1) {
         // call navigation controller for heading hold
         nav_controller->update_heading_hold(steer_state.hold_course_cd);
     } else {
         nav_controller->update_level_flight();        
     }
+
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    // abort checks, GCS reporting and logging
+    runway_takeoff.update_monitor();
+#endif
 
     // check for optional takeoff timeout
     if (plane.check_takeoff_timeout()) {
@@ -622,6 +651,9 @@ bool Plane::verify_takeoff()
         steer_state.hold_course_cd = -1;
         auto_state.takeoff_complete = true;
         next_WP_loc = prev_WP_loc = current_loc;
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+        runway_takeoff.takeoff_complete();
+#endif
 
 #if AP_FENCE_ENABLED
         plane.fence.auto_enable_fence_after_takeoff();

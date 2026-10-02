@@ -971,6 +971,12 @@ const AP_Param::Info Plane::var_info[] = {
     // @Path: pullup.cpp
     GOBJECTN(mode_auto.pullup, pullup, "PUP_", GliderPullup),
 #endif
+
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    // @Group: RWY_
+    // @Path: runway_takeoff.cpp
+    GOBJECT(runway_takeoff, "RWY_", RunwayTakeoff),
+#endif
     
     // @Group:
     // @Path: ../libraries/AP_Vehicle/AP_Vehicle.cpp

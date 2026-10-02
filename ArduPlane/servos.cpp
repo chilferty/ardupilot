@@ -1065,6 +1065,12 @@ void Plane::servos_output(void)
 
     SRV_Channels::output_ch_all();
 
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    // apply wheel brake override after an aborted takeoff. Must come
+    // after output_ch_all() so it wins over RC passthrough
+    runway_takeoff.update_outputs();
+#endif
+
     srv.push();
 
     if (g2.servo_channels.auto_trim_enabled()) {
