@@ -1,0 +1,41 @@
+# SITL parameters for playing with the RWY_ runway takeoff feature.
+# Use with: sim_vehicle.py -v ArduPlane -f plane-ice-steering ...
+#   --add-param-file=Tools/autotest/default_params/plane-ice.parm
+#   --add-param-file=Tools/autotest/runway_takeoff_sitl.parm
+# The plane-ice-steering SITL model steers its nosewheel from SERVO5.
+
+# nosewheel steering
+SERVO5_FUNCTION 26
+GROUND_STEER_ALT 5
+STEER2SRV_P 3.0
+STEER2SRV_I 0.0
+STEER2SRV_D 0.0
+STEER2SRV_MINSPD 2
+
+# ground takeoff
+TKOFF_ROTATE_SPD 15
+TKOFF_THR_MAX 100
+TKOFF_THR_MINSPD 0
+TKOFF_THR_MINACC 0
+TKOFF_THR_DELAY 0
+TKOFF_GND_PITCH 0
+LEVEL_ROLL_LIMIT 5
+
+# engine started/stopped by MAVLink DO_ENGINE_CONTROL only (no RC switch),
+# overriding RC11_OPTION 179 from plane-ice.parm
+RC11_OPTION 0
+
+# brakes on SERVO9 as RC9 passthrough (the sim has no brakes; watch the PWM)
+SERVO9_FUNCTION 59
+
+# runway: heading 090 true, TAKEOFF point 1500 m east of the start
+RWY_ENABLE 1
+RWY_HDG 90
+RWY_STRT_XTRK 3
+RWY_STRT_HDG 5
+RWY_STRT_DIST 1000
+RWY_ABT_XTRK 0
+RWY_ABT_HDG 0
+RWY_V1 13
+RWY_BRK_CHAN 9
+RWY_BRK_PWM 1900

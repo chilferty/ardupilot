@@ -83,7 +83,8 @@ BASE_PARAMS = {
     "SIM_WIND_DIR": 180,
     "SIM_WIND_TURB": 1,
     "LOG_DISARMED": 0,
-    "RC_OVERRIDE_TIME": -1,  # overrides never time out (test determinism)
+    "RC_OVERRIDE_TIME": -1,
+    "RC11_OPTION": 0,         # no engine RC switch (engine by MAVLink command)  # overrides never time out (test determinism)
 }
 
 RWY_PARAMS = {
@@ -113,6 +114,8 @@ class Sim:
         defaults = ",".join([
             os.path.join(ROOT, "Tools/autotest/models/plane.parm"),
             os.path.join(ROOT, "Tools/autotest/default_params/plane-ice.parm"),
+            # sets RC11_OPTION 0 at boot: engine by MAVLink command only
+            os.path.join(ROOT, "Tools/autotest/runway_takeoff_sitl.parm"),
         ])
         cmd = [BINARY, "--model", "plane-ice-steering", "--home", home,
                "--defaults", defaults, "--speedup", os.environ.get("RWY_SPEEDUP", "5"), "-I%d" % instance, "-w"]
@@ -247,9 +250,12 @@ class Sim:
         self.pump(1.5)
 
     def start_engine(self):
-        # engine start switch (RC11) to run
-        self.rc_override({11: 1900, 9: 1100, 3: 1000})
-        self.pump(6)
+        # no engine RC switch: start with MAV_CMD_DO_ENGINE_CONTROL,
+        # allowing a start while disarmed (flags bit 0)
+        self.rc_override({9: 1100, 3: 1000})
+        self.mav.mav.command_long_send(1, 1, mavutil.mavlink.MAV_CMD_DO_ENGINE_CONTROL, 0,
+                                       1, 0, 0, 1, 0, 0, 0)
+        self.pump(8)
 
     def run_takeoff(self, seconds):
         t_end = time.time() + seconds
@@ -289,9 +295,10 @@ def scenario(name, params, start_offset, yaw_err, run_s, extra=None, ref=True):
             except RuntimeError as ex:
                 print("  mission upload retry: %s" % ex)
                 sim.pump(2)
-        sim.start_engine()
         sim.set_mode("AUTO")
         sim.arm()
+        # SITL only drives the starter when armed, so start after arming
+        sim.start_engine()
         if extra is not None:
             extra(sim)
         else:
@@ -321,7 +328,8 @@ def scenario(name, params, start_offset, yaw_err, run_s, extra=None, ref=True):
 
 
 def abort_extra(sim):
-    # run until abort then check engine/brakes, then exercise clearing
+    # run until abort, check engine/brakes, then check the engine stays
+    # stopped and the abort clears on disarm
     t0 = time.time()
     while time.time() - t0 < 60 and not any("ABORT" in t for t in sim.texts):
         sim.rc_override({})
@@ -329,16 +337,15 @@ def abort_extra(sim):
     sim.run_takeoff(12)
     print("  last SERVO3 (thr) %s SERVO9 (brake) %s" %
           (sim.brake_pwm[-1][2], sim.brake_pwm[-1][1]))
+    # a start command while the abort is latched must not start the engine
+    sim.mav.mav.command_long_send(1, 1, mavutil.mavlink.MAV_CMD_DO_ENGINE_CONTROL, 0,
+                                  1, 0, 0, 0, 0, 0, 0)
+    sim.run_takeoff(6)
     sim.disarm()
-    # engine switch still in run -> abort must stay latched
-    for _ in range(12):
+    for _ in range(8):
         sim.rc_override({})
         sim.pump(0.5)
-    print("  disarmed, engine switch in run: SERVO9 (brake) %s" % sim.brake_pwm[-1][1])
-    for _ in range(6):
-        sim.rc_override({11: 1100})
-        sim.pump(0.5)
-    print("  after clear SERVO9 %s" % sim.brake_pwm[-1][1])
+    print("  after disarm SERVO9 %s" % sim.brake_pwm[-1][1])
 
 
 def main():
