@@ -305,7 +305,7 @@ void RunwayTakeoff::update_monitor()
         reason = "xtrack";
     } else if (abort_hdg > 0 && fabsf(hdg_err) > abort_hdg) {
         reason = "heading";
-    } else if (plane.gps.status() < AP_GPS_FixType::FIX_3D) {
+    } else if (plane.gps.status() < AP_GPS::GPS_OK_FIX_3D) {
         reason = "GPS fix lost";
     }
 

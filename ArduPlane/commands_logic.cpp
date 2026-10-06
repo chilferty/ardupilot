@@ -600,7 +600,7 @@ bool Plane::verify_takeoff()
 
 #if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
     if (runway_takeoff.active() && trust_ahrs_yaw && steer_state.hold_course_cd == -1 &&
-        gps.status() >= AP_GPS_FixType::FIX_3D &&
+        gps.status() >= AP_GPS::GPS_OK_FIX_3D &&
         gps.ground_speed() > GPS_GND_CRS_MIN_SPD &&
         hal.util->safety_switch_state() != AP_HAL::Util::SAFETY_DISARMED) {
         // same trigger as the stock course lock, but the course is the
