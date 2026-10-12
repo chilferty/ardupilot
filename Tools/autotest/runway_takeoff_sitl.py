@@ -8,13 +8,14 @@ pymavlink and reports the cross-track error during the takeoff roll.
 usage:
   python3 Tools/autotest/runway_takeoff_sitl.py [scenario ...]
 
-scenarios: stock, track, refuse, abort, past_v1, all (default)
+scenarios: stock, track, refuse, nodef, nowp, abort, abort_steer, past_v1,
+           mission, all (default)
 
-The runway is synthetic: heading RWY_HDG_DEG true, reference point
-REF_DIST_M ahead of a "threshold" point near CMAC. The aircraft is placed
-START_OFFSET_M to the right of the centreline, yawed START_YAW_ERR_DEG
-off the runway heading, with a crosswind, to make the stock heading-hold
-drift.
+The runway is synthetic, heading RWY_HDG_DEG true near CMAC. Point A (the
+TAKEOFF item) is the threshold, point B (the next waypoint) is B_DIST_M
+down the runway. The aircraft is placed a few metres right of the
+centreline and yawed off the runway heading, with a crosswind, to make
+the stock heading-hold drift.
 """
 
 import math
@@ -33,7 +34,7 @@ THRESH_LAT = -35.363261
 THRESH_LON = 149.165230
 THRESH_ALT = 584
 RWY_HDG_DEG = 90.0
-REF_DIST_M = 1500.0
+B_DIST_M = 1500.0
 
 EARTH_R = 6378137.0
 
@@ -47,7 +48,7 @@ def offset(lat, lon, bearing_deg, dist_m):
     return lat2, lon2
 
 
-REF_LAT, REF_LON = offset(THRESH_LAT, THRESH_LON, RWY_HDG_DEG, REF_DIST_M)
+B_LAT, B_LON = offset(THRESH_LAT, THRESH_LON, RWY_HDG_DEG, B_DIST_M)
 
 
 def line_errors(lat, lon):
@@ -83,13 +84,13 @@ BASE_PARAMS = {
     "SIM_WIND_DIR": 180,
     "SIM_WIND_TURB": 1,
     "LOG_DISARMED": 0,
-    "RC_OVERRIDE_TIME": -1,
-    "RC11_OPTION": 0,         # no engine RC switch (engine by MAVLink command)  # overrides never time out (test determinism)
+    "RC_OVERRIDE_TIME": -1,   # overrides never time out (test determinism)
+    "RC11_OPTION": 0,         # no engine RC switch (engine by MAVLink command)
+    "STICK_MIXING": 1,
 }
 
 RWY_PARAMS = {
     "RWY_ENABLE": 1,
-    "RWY_HDG": RWY_HDG_DEG,
     "RWY_STRT_XTRK": 3,
     "RWY_STRT_HDG": 5,
     "RWY_STRT_DIST": 1000,
@@ -98,6 +99,10 @@ RWY_PARAMS = {
     "RWY_V1": 0,
     "RWY_BRK_CHAN": 9,
     "RWY_BRK_PWM": 1900,
+    "RWY_BRK_RAMP": 1,
+    "RWY_BLEND": 2,
+    "RWY_MAX_CORR": 10,
+    "RWY_LOOKAHEAD": 3,
 }
 
 
@@ -128,6 +133,7 @@ class Sim:
         self.texts = []
         self.track = []      # (t, xtrk, along, spd, alt)
         self.brake_pwm = []  # (t, pwm9, pwm3)
+        self.att = []        # (t, yaw_deg, yawrate_dps)
         self.last_rc = {}
         for stream in (mavutil.mavlink.MAV_DATA_STREAM_ALL,):
             self.mav.mav.request_data_stream_send(1, 1, stream, 20, 1)
@@ -156,9 +162,11 @@ class Sim:
         elif t == "GLOBAL_POSITION_INT":
             x, a = line_errors(m.lat * 1e-7, m.lon * 1e-7)
             spd = math.hypot(m.vx, m.vy) * 0.01
-            self.track.append((time.time(), x, a, spd, m.relative_alt * 0.001))
+            self.track.append((time.time(), x, a, spd, m.relative_alt * 0.001, m.lat * 1e-7, m.lon * 1e-7))
         elif t == "SERVO_OUTPUT_RAW":
-            self.brake_pwm.append((time.time(), m.servo9_raw, m.servo3_raw))
+            self.brake_pwm.append((time.time(), m.servo9_raw, m.servo3_raw, m.time_usec * 1e-6))
+        elif t == "ATTITUDE":
+            self.att.append((time.time(), math.degrees(m.yaw), math.degrees(m.yawspeed)))
 
     def set_param(self, name, value):
         for _ in range(5):
@@ -186,22 +194,24 @@ class Sim:
             vals[ch - 1] = pwm
         self.mav.mav.rc_channels_override_send(1, 1, *vals)
 
-    def upload_mission(self, ref=True):
+    def upload_mission(self, ref=True, b_cmd=None, items_extra=None):
+        wp = mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+        rel = mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT
         items = []
         # 0: home
-        items.append((mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0, 0, THRESH_LAT, THRESH_LON, 0,
-                      mavutil.mavlink.MAV_FRAME_GLOBAL))
-        # 1: takeoff, lat/lon = runway reference point
+        items.append((wp, 0, 0, 0, 0, THRESH_LAT, THRESH_LON, 0, mavutil.mavlink.MAV_FRAME_GLOBAL))
+        # 1: takeoff, lat/lon = point A (runway threshold on the centreline)
         items.append((mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 10, 0, 0, 0,
-                      REF_LAT if ref else 0, REF_LON if ref else 0, 40,
-                      mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT))
-        far_lat, far_lon = offset(THRESH_LAT, THRESH_LON, RWY_HDG_DEG, 4000)
-        items.append((mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0, 0, far_lat, far_lon, 80,
-                      mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT))
-        items.append((mavutil.mavlink.MAV_CMD_NAV_LOITER_UNLIM, 0, 0, 0, 0, far_lat, far_lon, 80,
-                      mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT))
+                      THRESH_LAT if ref else 0, THRESH_LON if ref else 0, 40, rel))
+        # 2: point B, departure end of the runway on the centreline
+        items.append((b_cmd if b_cmd is not None else wp, 0, 0, 0, 0, B_LAT, B_LON, 60, rel))
+        if items_extra is not None:
+            items.extend(items_extra)
+        else:
+            far_lat, far_lon = offset(THRESH_LAT, THRESH_LON, RWY_HDG_DEG, 4000)
+            items.append((wp, 0, 0, 0, 0, far_lat, far_lon, 80, rel))
+            items.append((mavutil.mavlink.MAV_CMD_NAV_LOITER_UNLIM, 0, 0, 0, 0, far_lat, far_lon, 80, rel))
         self.mav.mav.mission_count_send(1, 1, len(items))
-        sent = set()
         t0 = time.time()
         while time.time() - t0 < 20:
             m = self.mav.recv_match(type=["MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK"],
@@ -216,7 +226,6 @@ class Sim:
             self.mav.mav.mission_item_int_send(1, 1, m.seq, frame, cmd, 0, 1, p1, p2, p3, p4,
                                                int(lat * 1e7), int(lon * 1e7), alt,
                                                mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
-            sent.add(m.seq)
         raise RuntimeError("mission upload timeout")
 
     def wait_ready(self):
@@ -277,8 +286,13 @@ class Sim:
             "dist": pts[-1][2] - pts[0][2],
         }
 
+    def yaw_rate_stats(self, t_from, t_to):
+        """max |yaw rate| between two wall-clock times"""
+        rates = [abs(r) for (t, _, r) in self.att if t_from <= t <= t_to]
+        return max(rates) if rates else None
 
-def scenario(name, params, start_offset, yaw_err, run_s, extra=None, ref=True):
+
+def scenario(name, params, start_offset, yaw_err, run_s, extra=None, ref=True, b_cmd=None, items_extra=None):
     print("\n=== %s: start offset %.1fm right, yaw err %+.1f deg ===" % (name, start_offset, yaw_err))
     sim = Sim(start_offset, yaw_err)
     try:
@@ -290,13 +304,14 @@ def scenario(name, params, start_offset, yaw_err, run_s, extra=None, ref=True):
         sim.wait_ready()
         for attempt in range(3):
             try:
-                sim.upload_mission(ref=ref)
+                sim.upload_mission(ref=ref, b_cmd=b_cmd, items_extra=items_extra)
                 break
             except RuntimeError as ex:
                 print("  mission upload retry: %s" % ex)
                 sim.pump(2)
         sim.set_mode("AUTO")
         sim.arm()
+        t_roll = time.time()
         # SITL only drives the starter when armed, so start after arming
         sim.start_engine()
         if extra is not None:
@@ -308,12 +323,13 @@ def scenario(name, params, start_offset, yaw_err, run_s, extra=None, ref=True):
         res = {"stats": st, "texts": list(sim.texts),
                "airborne_xt": air[0][1] if air else None,
                "final_alt": sim.track[-1][4] if sim.track else None,
-               "brake": list(sim.brake_pwm)}
+               "brake": list(sim.brake_pwm),
+               "max_yaw_rate_roll": sim.yaw_rate_stats(t_roll, t_roll + 25)}
         print("  roll stats: %s" % st)
         # cross-track profile against distance down the runway
         prof = []
         nxt = 0
-        for (_, x, a, spd, alt) in sim.track:
+        for (_, x, a, spd, alt, _, _) in sim.track:
             if a >= nxt and spd > 0.5:
                 prof.append("%4.0fm:%+5.1f%s" % (a, x, "*" if alt > 1 else ""))
                 nxt += 50
@@ -322,9 +338,23 @@ def scenario(name, params, start_offset, yaw_err, run_s, extra=None, ref=True):
         print("  xt profile (along:xt, *=airborne): " + " ".join(prof))
         if air:
             print("  xt when passing 30m AGL: %.1fm" % air[0][1])
+        if res["max_yaw_rate_roll"] is not None:
+            print("  max |yaw rate| in first 25 s of roll: %.1f deg/s" % res["max_yaw_rate_roll"])
         return res
     finally:
         sim.close()
+
+
+def report_brake_ramp(sim):
+    """time for SERVO9 to go from its value at the abort to full"""
+    t_abort = None
+    for (_, pwm, _, tb) in sim.brake_pwm:
+        if pwm > 1110 and t_abort is None:
+            t_abort = tb
+        if t_abort is not None and pwm >= 1895:
+            print("  brake ramp: SERVO9 reached %d %.2f s (sim time) after it started rising" % (pwm, tb - t_abort))
+            return
+    print("  brake ramp: full brake not seen")
 
 
 def abort_extra(sim):
@@ -337,6 +367,7 @@ def abort_extra(sim):
     sim.run_takeoff(12)
     print("  last SERVO3 (thr) %s SERVO9 (brake) %s" %
           (sim.brake_pwm[-1][2], sim.brake_pwm[-1][1]))
+    report_brake_ramp(sim)
     # a start command while the abort is latched must not start the engine
     sim.mav.mav.command_long_send(1, 1, mavutil.mavlink.MAV_CMD_DO_ENGINE_CONTROL, 0,
                                   1, 0, 0, 0, 0, 0, 0)
@@ -346,6 +377,73 @@ def abort_extra(sim):
         sim.rc_override({})
         sim.pump(0.5)
     print("  after disarm SERVO9 %s" % sim.brake_pwm[-1][1])
+
+
+def abort_steer_extra(sim):
+    """steering working; a pilot rudder kick pushes it off the line at
+    speed, the abort fires, then check the stop stays straight"""
+    t0 = time.time()
+    kicked = False
+    while time.time() - t0 < 60 and not any("ABORT" in t for t in sim.texts):
+        spd = sim.track[-1][3] if sim.track else 0
+        if not kicked and spd > 10:
+            kicked = True
+            # about 1 s of sim time of right rudder
+            sim.rc_override({4: 1650})
+            sim.pump(1.0 / float(os.environ.get("RWY_SPEEDUP", "5")))
+            sim.rc_override({4: 1500})
+        sim.rc_override({})
+        sim.pump(0.3)
+    t_abort = time.time()
+    sim.run_takeoff(15)
+    after = [p for p in sim.track if p[0] >= t_abort]
+    if after:
+        xs = [p[1] for p in after]
+        print("  after abort: xt from %+.1f to %+.1f m, extremes %+.1f / %+.1f m" %
+              (xs[0], xs[-1], min(xs), max(xs)))
+    yaws = [((y - RWY_HDG_DEG + 180) % 360) - 180 for (t, y, _) in sim.att if t >= t_abort]
+    if yaws:
+        print("  after abort: heading error extremes %+.1f / %+.1f deg, final %+.1f" %
+              (min(yaws), max(yaws), yaws[-1]))
+    report_brake_ramp(sim)
+
+
+def mission_items_other_runway():
+    """after takeoff, fly to a second runway 2 km north of the first,
+    heading 180, and land on it (WP before LAND -> LAND on its centreline)"""
+    wp = mavutil.mavlink.MAV_CMD_NAV_WAYPOINT
+    rel = mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT
+    r2_lat, r2_lon = offset(THRESH_LAT, THRESH_LON, 0, 2000)        # runway 2 threshold
+    app_lat, app_lon = offset(r2_lat, r2_lon, 0, 1200)              # approach point on extended centreline
+    land_lat, land_lon = offset(r2_lat, r2_lon, 180, 150)           # touchdown point
+    far_lat, far_lon = offset(THRESH_LAT, THRESH_LON, RWY_HDG_DEG, 3000)
+    turn_lat, turn_lon = offset(app_lat, app_lon, 90, 1500)
+    return [
+        (wp, 0, 0, 0, 0, far_lat, far_lon, 80, rel),
+        (wp, 0, 0, 0, 0, turn_lat, turn_lon, 80, rel),
+        (wp, 0, 0, 0, 0, app_lat, app_lon, 40, rel),
+        (mavutil.mavlink.MAV_CMD_NAV_LAND, 0, 0, 0, 0, land_lat, land_lon, 0, rel),
+    ], (r2_lat, r2_lon)
+
+
+def mission_extra(sim):
+    t_end = time.time() + 600 / float(os.environ.get("RWY_SPEEDUP", "5"))
+    while time.time() < t_end and not any("Throttle disarmed" in t for t in sim.texts):
+        sim.rc_override({})
+        sim.pump(0.5)
+    # landing rollout against runway 2's centreline (heading 180 through its threshold)
+    _, (r2_lat, r2_lon) = mission_items_other_runway()
+    roll = [p for p in sim.track if p[4] < 1.0 and p[3] > 1.0 and
+            abs(p[5] - r2_lat) * 111000 < 1500]
+    if roll:
+        xs = []
+        for p in roll:
+            de = math.radians(p[6] - r2_lon) * EARTH_R * math.cos(math.radians(r2_lat))
+            xs.append(-de)   # heading 180: right of the line is west
+        print("  landing rollout on runway 2: %d samples, xt from %+.1f to %+.1f m, max |xt| %.1f m" %
+              (len(xs), xs[0], xs[-1], max(abs(x) for x in xs)))
+    else:
+        print("  landing rollout on runway 2: not seen")
 
 
 def main():
@@ -363,12 +461,25 @@ def main():
         p = dict(RWY_PARAMS)
         results["refuse"] = scenario("start check refuses (5m off)", p, 5.0, 0.0, 15)
     if on("nodef"):
-        results["nodef"] = scenario("no runway point in TAKEOFF item", RWY_PARAMS, 0.0, 0.0, 15, ref=False)
+        results["nodef"] = scenario("no point A in TAKEOFF item", RWY_PARAMS, 0.0, 0.0, 15, ref=False)
+    if on("nowp"):
+        results["nowp"] = scenario("item after TAKEOFF is not a waypoint", RWY_PARAMS, 0.0, 0.0, 15,
+                                   b_cmd=mavutil.mavlink.MAV_CMD_NAV_LOITER_UNLIM)
     if on("abort"):
         # steering removed so the crosswind/yaw error pushes it off the line
         p = dict(RWY_PARAMS, RWY_ABT_XTRK=3, RWY_V1=13, SERVO5_FUNCTION=0, KFF_RDDRMIX=0,
                  RWY_STRT_HDG=5)
         results["abort"] = scenario("abort below V1 (no steering)", p, 0.0, 3.0, 0, extra=abort_extra)
+    if on("abort_steer"):
+        # steering working, pilot kick at 10 m/s pushes it off the line
+        p = dict(RWY_PARAMS, RWY_ABT_XTRK=2, RWY_V1=13)
+        results["abort_steer"] = scenario("abort after a pilot kick (steering on)", p, 0.0, 0.0, 0,
+                                          extra=abort_steer_extra)
+    if on("mission"):
+        items, _ = mission_items_other_runway()
+        p = dict(RWY_PARAMS, TKOFF_THR_MAX=100)
+        results["mission"] = scenario("take off runway 1, land on runway 2", p, 1.0, 2.0, 0,
+                                      extra=mission_extra, items_extra=items)
     if on("past_v1"):
         p = dict(RWY_PARAMS, RWY_ABT_XTRK=3, RWY_V1=8, SERVO5_FUNCTION=0, KFF_RDDRMIX=0)
         results["past_v1"] = scenario("deviation after V1 continues", p, 0.0, 3.0, 45)
@@ -378,12 +489,14 @@ def main():
         st = r["stats"]
         aborted = any("ABORT" in t for t in r["texts"])
         refused = any("RWY: start" in t or "RWY: no runway" in t for t in r["texts"])
-        print("%-8s max|xt| roll %s  xt@30m %s  final alt %s  aborted=%s refused=%s" % (
+        landed = any("Landed" in t or "Flare" in t for t in r["texts"])
+        print("%-11s max|xt| roll %s  max yaw rate %s  xt@30m %s  final alt %s  aborted=%s refused=%s landed=%s" % (
             k,
             "%.2f" % st["max_abs_xt"] if st else "-",
+            "%.1f" % r["max_yaw_rate_roll"] if r["max_yaw_rate_roll"] is not None else "-",
             "%.2f" % r["airborne_xt"] if r["airborne_xt"] is not None else "-",
             "%.0f" % r["final_alt"] if r["final_alt"] is not None else "-",
-            aborted, refused))
+            aborted, refused, landed))
 
 
 if __name__ == "__main__":

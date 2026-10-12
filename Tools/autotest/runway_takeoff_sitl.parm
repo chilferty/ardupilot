@@ -28,12 +28,15 @@ RC11_OPTION 0
 # brakes on SERVO9 as RC9 passthrough (the sim has no brakes; watch the PWM)
 SERVO9_FUNCTION 59
 
-# runway: heading 090 true, TAKEOFF point 1500 m east of the start
+# runway line: TAKEOFF item (point A) to the next waypoint (point B)
 RWY_ENABLE 1
-RWY_HDG 90
 RWY_STRT_XTRK 3
 RWY_STRT_HDG 5
 RWY_STRT_DIST 1000
+RWY_BRK_RAMP 1
+RWY_BLEND 2
+RWY_MAX_CORR 10
+RWY_LOOKAHEAD 3
 RWY_ABT_XTRK 0
 RWY_ABT_HDG 0
 RWY_V1 13
