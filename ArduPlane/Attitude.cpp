@@ -576,6 +576,10 @@ int16_t Plane::calc_nav_yaw_course(void)
     // holding a specific navigation course on the ground. Used in
     // auto-takeoff and landing
     int32_t bearing_error_cd = nav_controller->bearing_error_cd();
+#if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
+    // on a runway takeoff roll or abort stop, steer with the runway law
+    runway_takeoff.ground_steering_error(bearing_error_cd);
+#endif
     int16_t steering = steerController.get_steering_out_angle_error(bearing_error_cd);
     if (stick_mixing_enabled()) {
         steering = channel_rudder->stick_mixing(steering);

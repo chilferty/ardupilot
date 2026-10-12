@@ -376,8 +376,9 @@ Location Plane::calc_best_rally_or_home_location(const Location &_current_loc, f
 void Plane::do_takeoff(const AP_Mission::Mission_Command& cmd)
 {
 #if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
-    // the TAKEOFF lat/lon (otherwise unused by Plane) defines the runway
-    runway_takeoff.init(cmd.content.location);
+    // the TAKEOFF lat/lon (otherwise unused by Plane) and the next
+    // waypoint define the runway line
+    runway_takeoff.init(cmd);
 #endif
     prev_WP_loc = current_loc;
     set_next_WP(cmd.content.location);
@@ -599,13 +600,11 @@ bool Plane::verify_takeoff()
     }
 
 #if AP_PLANE_RUNWAY_TAKEOFF_ENABLED
-    if (runway_takeoff.active() && trust_ahrs_yaw && steer_state.hold_course_cd == -1 &&
-        gps.status() >= AP_GPS::GPS_OK_FIX_3D &&
-        gps.ground_speed() > GPS_GND_CRS_MIN_SPD &&
-        hal.util->safety_switch_state() != AP_HAL::Util::SAFETY_DISARMED) {
-        // same trigger as the stock course lock, but the course is the
-        // runway heading. hold_course_cd != -1 selects course steering
-        // (calc_nav_yaw_course) which uses the L1 bearing error below
+    if (runway_takeoff.active() && runway_takeoff.roll_started() &&
+        steer_state.hold_course_cd == -1) {
+        // normally set at the start of the roll; restore it if it was
+        // cleared. hold_course_cd != -1 selects course steering
+        // (calc_nav_yaw_course), which uses the runway steering error
         steer_state.hold_course_cd = runway_takeoff.runway_heading_cd();
     }
 
